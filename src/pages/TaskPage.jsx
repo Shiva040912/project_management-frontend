@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { io } from "socket.io-client";
 import {
-  FiSearch,
   FiUser,
   FiCalendar,
   FiEdit,
@@ -20,9 +19,9 @@ const socket = io(import.meta.env.VITE_API_URL || "http://localhost:5000");
 
 const TaskPage = () => {
   const { boardId } = useParams();
+
   const [searchText, setSearchText] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("ALL");
-
   const [tasks, setTasks] = useState([]);
   const [editingTask, setEditingTask] = useState(null);
   const formRef = useRef(null);
@@ -55,10 +54,57 @@ const TaskPage = () => {
   const fetchTasks = async () => {
     try {
       const res = await api.get(`/tasks/${boardId}`);
-      setTasks(res.data);
+      setTasks(res.data || []);
     } catch (err) {
       console.error("Fetch Tasks Error:", err);
     }
+  };
+
+  const updateTaskStatus = async (taskId, newStatus) => {
+    if (!isAdmin) return;
+
+    const oldTasks = [...tasks];
+
+    try {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t._id === taskId ? { ...t, status: newStatus } : t
+        )
+      );
+
+      await api.patch(`/tasks/${taskId}/status`, { status: newStatus });
+
+      socket.emit("taskStatusChanged", {
+        taskId,
+        newStatus,
+      });
+
+      fetchTasks();
+    } catch (err) {
+      console.error("Status Update Error:", err);
+      setTasks(oldTasks);
+      alert("Failed to update task status");
+    }
+  };
+
+  const onDragStart = (e, taskId) => {
+    if (!isAdmin) return;
+    e.dataTransfer.setData("taskId", taskId);
+  };
+
+  const onDrop = async (e, newStatus) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+
+    const taskId = e.dataTransfer.getData("taskId");
+
+    if (!taskId) return;
+
+    await updateTaskStatus(taskId, newStatus);
+  };
+
+  const handleMobileStatusChange = async (taskId, newStatus) => {
+    await updateTaskStatus(taskId, newStatus);
   };
 
   const handleChange = (e) => {
@@ -72,7 +118,11 @@ const TaskPage = () => {
     try {
       if (editingTask) {
         const res = await api.patch(`/tasks/${editingTask._id}`, form);
-        setTasks(tasks.map((t) => (t._id === editingTask._id ? res.data : t)));
+
+        setTasks((prev) =>
+          prev.map((t) => (t._id === editingTask._id ? res.data : t))
+        );
+
         setEditingTask(null);
       } else {
         const res = await api.post("/tasks", {
@@ -80,7 +130,8 @@ const TaskPage = () => {
           boardId,
           status: "TODO",
         });
-        setTasks([...tasks, res.data]);
+
+        setTasks((prev) => [...prev, res.data]);
       }
 
       setForm({
@@ -90,7 +141,10 @@ const TaskPage = () => {
         dueDate: "",
         assignedTo: "",
       });
-    } catch {
+
+      fetchTasks();
+    } catch (err) {
+      console.error("Save Task Error:", err);
       alert("Failed to save task");
     }
   };
@@ -98,30 +152,39 @@ const TaskPage = () => {
   const handleDelete = async (taskId) => {
     if (!isAdmin) return;
 
+    if (!window.confirm("Delete this task?")) return;
+
     try {
       await api.delete(`/tasks/${taskId}`);
-      setTasks(tasks.filter((t) => t._id !== taskId));
-    } catch {
+      setTasks((prev) => prev.filter((t) => t._id !== taskId));
+    } catch (err) {
+      console.error("Delete Task Error:", err);
       alert("Failed to delete task");
     }
   };
 
-  const onDragStart = (e, taskId) => {
-    e.dataTransfer.setData("taskId", taskId);
+  const handleEditClick = (task) => {
+    setEditingTask(task);
+
+    setForm({
+      title: task.title || "",
+      description: task.description || "",
+      priority: task.priority || "MEDIUM",
+      dueDate: task.dueDate ? task.dueDate.slice(0, 10) : "",
+      assignedTo: task.assignedTo || "",
+    });
+
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 100);
   };
 
-  const onDrop = async (e, newStatus) => {
-    const taskId = e.dataTransfer.getData("taskId");
-
-    setTasks(
-      tasks.map((t) => (t._id === taskId ? { ...t, status: newStatus } : t))
-    );
-
-    await api.patch(`/tasks/${taskId}/status`, { status: newStatus });
-    socket.emit("taskStatusChanged", { taskId, newStatus });
+  const getCount = (status) => {
+    return tasks.filter((t) => t.status === status).length;
   };
-
-  const getCount = (status) => tasks.filter((t) => t.status === status).length;
 
   const priorityClass = (priority) => {
     if (priority === "HIGH") return "priority-high";
@@ -140,24 +203,11 @@ const TaskPage = () => {
     return matchesSearch && matchesPriority;
   });
 
-  const handleEditClick = (task) => {
-    setEditingTask(task);
-
-    setForm({
-      title: task.title || "",
-      description: task.description || "",
-      priority: task.priority || "MEDIUM",
-      dueDate: task.dueDate || "",
-      assignedTo: task.assignedTo || "",
-    });
-
-    setTimeout(() => {
-      formRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    }, 100);
-  };
+  const columns = [
+    { key: "TODO", title: "TODO", icon: <FiCircle /> },
+    { key: "INPROGRESS", title: "IN PROGRESS", icon: <FiClock /> },
+    { key: "DONE", title: "DONE", icon: <FiCheckCircle /> },
+  ];
 
   return (
     <div className="kanban-pro-page">
@@ -181,12 +231,14 @@ const TaskPage = () => {
             <FiCircle /> Todo
           </p>
         </div>
+
         <div>
           <h3>{getCount("INPROGRESS")}</h3>
           <p>
             <FiClock /> In Progress
           </p>
         </div>
+
         <div>
           <h3>{getCount("DONE")}</h3>
           <p>
@@ -196,11 +248,7 @@ const TaskPage = () => {
       </div>
 
       {isAdmin && (
-        <form
-          ref={formRef}
-          className="task-create-pro"
-          onSubmit={handleAddTask}
-        >
+        <form ref={formRef} className="task-create-pro" onSubmit={handleAddTask}>
           <input
             name="title"
             value={form.title}
@@ -270,11 +318,7 @@ const TaskPage = () => {
       </div>
 
       <div className="kanban-pro-board">
-        {[
-          { key: "TODO", title: "TODO", icon: <FiCircle /> },
-          { key: "INPROGRESS", title: "IN PROGRESS", icon: <FiClock /> },
-          { key: "DONE", title: "DONE", icon: <FiCheckCircle /> },
-        ].map((col) => (
+        {columns.map((col) => (
           <div
             className="kanban-pro-column"
             key={col.key}
@@ -297,7 +341,7 @@ const TaskPage = () => {
                   <div
                     className="task-pro-card"
                     key={task._id}
-                    draggable
+                    draggable={isAdmin}
                     onDragStart={(e) => onDragStart(e, task._id)}
                   >
                     <span
@@ -315,19 +359,36 @@ const TaskPage = () => {
                       <span>
                         <FiUser /> {task.assignedTo || "Unassigned"}
                       </span>
+
                       <span>
-                        <FiCalendar /> {task.dueDate || "No date"}
+                        <FiCalendar />{" "}
+                        {task.dueDate
+                          ? new Date(task.dueDate).toLocaleDateString()
+                          : "No date"}
                       </span>
                     </div>
 
                     {isAdmin && (
                       <>
+                        <select
+                          className="mobile-status-select"
+                          value={task.status}
+                          onChange={(e) =>
+                            handleMobileStatusChange(task._id, e.target.value)
+                          }
+                        >
+                          <option value="TODO">TODO</option>
+                          <option value="INPROGRESS">IN PROGRESS</option>
+                          <option value="DONE">DONE</option>
+                        </select>
+
                         <button
                           className="task-edit-btn"
                           onClick={() => handleEditClick(task)}
                         >
                           <FiEdit /> Edit
                         </button>
+
                         <button
                           className="task-delete-btn"
                           onClick={() => handleDelete(task._id)}

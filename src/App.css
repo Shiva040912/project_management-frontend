@@ -1343,3 +1343,25 @@
     margin: 0 auto;
   }
 }
+.mobile-status-select {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid #d6d6d6;
+  background: #ffffff;
+  font-size: 14px;
+  outline: none;
+}
+
+@media (min-width: 769px) {
+  .mobile-status-select {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .task-pro-card {
+    touch-action: manipulation;
+  }
+}
