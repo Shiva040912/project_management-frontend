@@ -1327,3 +1327,19 @@
   font-size: 13px;
   text-transform: capitalize;
 }
+@media (max-width: 768px) {
+  .auth-pro-page {
+    min-height: 100vh;
+    height: auto;
+    padding: 24px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .auth-pro-card {
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+}
